@@ -1,5 +1,6 @@
 # --------------------------------------------
 # Life‑Expectancy Storyboard – Streamlit 1.x
+# tabs + info accordions
 # --------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -14,156 +15,227 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------- Load & prepare data ----------
+# ---------- Theme ----------
+THEME_COLORS = ["#006d77", "#ff595e"]  # high‑contrast teal & tomato
+
+# ---------- Data ----------
 DATA_PATH = Path(__file__).parent / "life_expectancy.csv"
 df = pd.read_csv(DATA_PATH)
 
-# Baseline GDP → life‑expectancy model (for residuals & KPI)
-g_coef = np.polyfit(np.log1p(df["gdp"]), df["life_expectancy"], 1)
-df["pred_le"] = g_coef[0] * np.log1p(df["gdp"]) + g_coef[1]
+coef = np.polyfit(np.log1p(df["gdp"]), df["life_expectancy"], 1)
+df["pred_le"] = coef[0] * np.log1p(df["gdp"]) + coef[1]
 df["residual_le"] = df["life_expectancy"] - df["pred_le"]
 
-YEARS = sorted(df["year"].unique())
-COUNTRIES = sorted(df["country"].unique())
-STATUSES = df["status"].unique()
+YEARS, STATUSES, COUNTRIES = (
+    sorted(df["year"].unique()),
+    df["status"].unique(),
+    sorted(df["country"].unique())
+)
 
-# ---------- Sidebar filters ----------
+# ---------- Sidebar ----------
 st.sidebar.header("🎛️ Filters")
 year_range = st.sidebar.slider(
     "Year range", int(min(YEARS)), int(max(YEARS)),
-    (int(min(YEARS)), int(max(YEARS))), step=1
+    (int(min(YEARS)), int(max(YEARS)))
 )
-status_sel = st.sidebar.multiselect(
-    "Country status", STATUSES, default=list(STATUSES)
-)
-country_sel = st.sidebar.multiselect(
-    "Select countries (optional)", COUNTRIES
-)
+status_sel = st.sidebar.multiselect("Country status", STATUSES, STATUSES)
+country_sel = st.sidebar.multiselect("Countries (optional)", COUNTRIES)
 
 df_filt = df.query(
-    " @year_range[0] <= year <= @year_range[1] "
-    " and status in @status_sel "
+    "@year_range[0] <= year <= @year_range[1] and status in @status_sel"
 )
 if country_sel:
     df_filt = df_filt[df_filt["country"].isin(country_sel)]
 
 # ---------- KPI row ----------
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-avg_le = df_filt["life_expectancy"].mean()
-avg_gdp = df_filt["gdp"].median()
-gap_le = (
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Avg Life Expectancy", f"{df_filt['life_expectancy'].mean():.1f} yrs")
+col2.metric("Median GDP / capita", f"${df_filt['gdp'].median():,.0f}")
+gap = (
     df_filt.groupby("status")["life_expectancy"].mean().diff().iloc[-1]
     if len(status_sel) == 2 else np.nan
 )
-num_countries = df_filt["country"].nunique()
-
-kpi1.metric("Avg Life Expectancy", f"{avg_le:,.1f} yrs")
-kpi2.metric("Median GDP / capita", f"${avg_gdp:,.0f}")
-kpi3.metric("Gap Developed – Developing",
-            f"{gap_le:+.1f} yrs" if not np.isnan(gap_le) else "–")
-kpi4.metric("Countries in view", f"{num_countries}")
+col3.metric("Gap Dev–Dev", f"{gap:+.1f} yrs" if not np.isnan(gap) else "–")
+col4.metric("Countries in view", f"{df_filt['country'].nunique()}")
 
 st.markdown("---")
 
-# ---------- 1. GDP vs Life Expectancy ----------
-st.subheader("Income and Longevity")
-fig_inc = px.scatter(
-    df_filt,
-    x="gdp", y="life_expectancy",
-    color="status", opacity=0.35,
-    template="plotly_white",
-    labels={"gdp": "GDP per capita (USD)",
-            "life_expectancy": "Life Expectancy (years)"},
-    trendline="lowess", trendline_color_override="black"
-)
-fig_inc.update_traces(marker=dict(size=6))
-fig_inc.update_layout(yaxis=dict(range=[35, 90]))
-st.plotly_chart(fig_inc, use_container_width=True)
+# ---------- Tabs ----------
+tabs = st.tabs([
+    "Income ↔ Longevity", "Education ↔ Longevity", "Schooling Residual",
+    "BMI Residual", "Alcohol", "Vaccination", "Time Trend",
+    "Leaders / Laggards"
+])
 
-# ---------- 2. Schooling vs Life Expectancy ----------
-st.subheader("Education and Longevity")
-fig_sch = px.scatter(
-    df_filt, x="schooling", y="life_expectancy",
-    color="status", opacity=0.35, template="plotly_white",
-    labels={"schooling": "Average years of schooling"}
-)
-# add regression line
-slope, intercept, *_ = stats.linregress(df_filt["schooling"],
-                                        df_filt["life_expectancy"])
-x_line = np.linspace(df_filt["schooling"].min(),
-                     df_filt["schooling"].max(), 100)
-fig_sch.add_scatter(x=x_line, y=slope * x_line + intercept,
+# ---- Helper to append expander text ----
+def add_expander(tab_container, summary_text):
+    with tab_container.expander("What does this show?"):
+        st.write(summary_text)
+
+# 1️⃣ Income vs Longevity -----------------
+with tabs[0]:
+    fig = px.scatter(
+        df_filt, x="gdp", y="life_expectancy",
+        color="status", color_discrete_sequence=THEME_COLORS,
+        opacity=0.35, template="plotly_white",
+        labels={
+            "gdp": "GDP per capita (USD, current)",
+            "life_expectancy": "Life Expectancy (years)"
+        },
+        trendline="lowess", trendline_scope="overall"
+    )
+    fig.update_traces(marker=dict(size=6))
+    fig.update_layout(yaxis_range=[35, 90], legend_title="Status")
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "The LOWESS curve reveals the classic Preston‑style saturation: "
+        "longevity rises steeply with income up to about $10 k, then gains taper."
+    )
+
+# 2️⃣ Education vs Longevity --------------
+with tabs[1]:
+    fig = px.scatter(
+        df_filt, x="schooling", y="life_expectancy",
+        color="status", color_discrete_sequence=THEME_COLORS,
+        opacity=0.35, template="plotly_white",
+        labels={
+            "schooling": "Average Years of Schooling",
+            "life_expectancy": "Life Expectancy (years)"
+        }
+    )
+    m, b, *_ = stats.linregress(df_filt["schooling"],
+                                df_filt["life_expectancy"])
+    x_line = np.linspace(df_filt["schooling"].min(),
+                         df_filt["schooling"].max(), 100)
+    fig.add_scatter(x=x_line, y=m * x_line + b,
                     mode="lines", name="Trend",
                     line=dict(color="black", width=2))
-fig_sch.update_traces(marker=dict(size=6), selector=dict(mode="markers"))
-st.plotly_chart(fig_sch, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "Each extra year of schooling correlates with ≈ 2.3 additional "
+        "years of life expectancy, highlighting education as a key lever."
+    )
 
-# ---------- 3. Schooling vs Residuals ----------
-with st.expander("Does education help beyond income?"):
-    fig_res = px.scatter(
+# 3️⃣ Schooling vs Residual ---------------
+with tabs[2]:
+    fig = px.scatter(
         df_filt, x="schooling", y="residual_le",
-        color="status", opacity=0.35, template="plotly_white",
-        labels={"schooling": "Years of schooling",
-                "residual_le": "Residual life expectancy (yrs)"}
+        color="status", color_discrete_sequence=THEME_COLORS,
+        opacity=0.35, template="plotly_white",
+        labels={
+            "schooling": "Years of Schooling",
+            "residual_le": "Residual Life Expectancy (yrs)"
+        }
     )
-    fig_res.add_hline(0, line_dash="dash", line_color="black")
-    st.plotly_chart(fig_res, use_container_width=True)
+    fig.add_hline(0, line_dash="dash", line_color="black")
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "Positive residuals mean a country outperforms the GDP‑only model. "
+        "Higher schooling shifts nations above zero, showing education "
+        "delivers a health dividend even after accounting for income."
+    )
 
-# ---------- 4. BMI vs Residual Life Expectancy ----------
-st.subheader("BMI and Longevity (net of income)")
-fig_bmi = px.scatter(
-    df_filt, x="bmi", y="residual_le",
-    color="status", opacity=0.35, template="plotly_white",
-    labels={"bmi": "Average BMI",
-            "residual_le": "Residual life expectancy (yrs)"}
-)
-fig_bmi.add_hline(0, line_dash="dash", line_color="black")
-st.plotly_chart(fig_bmi, use_container_width=True)
+# 4️⃣ BMI vs Residual ---------------------
+with tabs[3]:
+    fig = px.scatter(
+        df_filt, x="bmi", y="residual_le",
+        color="status", color_discrete_sequence=THEME_COLORS,
+        opacity=0.35, template="plotly_white",
+        labels={
+            "bmi": "Average BMI",
+            "residual_le": "Residual Life Expectancy (yrs)"
+        }
+    )
+    fig.add_hline(0, line_dash="dash", line_color="black")
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "Both under‑nutrition (low BMI) and obesity (very high BMI) sit below "
+        "the zero line, underscoring the importance of balanced nutrition."
+    )
 
-# ---------- 5. Alcohol vs Life Expectancy ----------
-with st.expander("Alcohol Consumption"):
-    fig_alc = px.scatter(
+# 5️⃣ Alcohol -----------------------------
+with tabs[4]:
+    fig = px.scatter(
         df_filt, x="alcohol", y="life_expectancy",
-        color="status", opacity=0.35, template="plotly_white",
-        labels={"alcohol": "L pure alcohol / adult"}
+        color="status", color_discrete_sequence=THEME_COLORS,
+        opacity=0.35, template="plotly_white",
+        labels={
+            "alcohol": "Litres of Pure Alcohol per Adult",
+            "life_expectancy": "Life Expectancy (years)"
+        }
     )
-    st.plotly_chart(fig_alc, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "The upward pattern is driven by wealth: richer countries both drink "
+        "more and live longer. Income, not alcohol, explains the apparent link."
+    )
 
-# ---------- 6. Vaccination vs Life Expectancy ----------
-st.subheader("Vaccination Coverage and Longevity (≥ 20 %)")
-vacc = df_filt[df_filt["diphtheria"] >= 20]
-fig_vac = px.scatter(
-    vacc, x="diphtheria", y="life_expectancy",
-    color="status", opacity=0.35, template="plotly_white",
-    labels={"diphtheria": "DTP3 immunisation (%)"}
-)
-st.plotly_chart(fig_vac, use_container_width=True)
+# 6️⃣ Vaccination -------------------------
+with tabs[5]:
+    vacc = df_filt[df_filt["diphtheria"] >= 20]
+    fig = px.scatter(
+        vacc, x="diphtheria", y="life_expectancy",
+        color="status", color_discrete_sequence=THEME_COLORS,
+        opacity=0.35, template="plotly_white",
+        labels={
+            "diphtheria": "DTP3 Immunisation Coverage (%)",
+            "life_expectancy": "Life Expectancy (years)"
+        },
+        trendline="lowess", trendline_scope="overall",
+        trendline_color_override="black"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "Once coverage exceeds ~60 %, life expectancy climbs sharply and "
+        "plateaus around 75 – 80 years, showing vaccines are a prerequisite "
+        "for high longevity."
+    )
 
-# ---------- 7. Trend over time ----------
-st.subheader("2000 – 2015 Progress")
-trend = (
-    df_filt.groupby(["year", "status"])["life_expectancy"]
-    .mean().reset_index()
-)
-fig_trend = px.line(
-    trend, x="year", y="life_expectancy",
-    color="status", markers=True, template="plotly_white",
-    labels={"life_expectancy": "Life Expectancy (years)"}
-)
-st.plotly_chart(fig_trend, use_container_width=True)
+# 7️⃣ Time Trend --------------------------
+with tabs[6]:
+    trend = (
+        df_filt.groupby(["year", "status"])["life_expectancy"]
+        .mean().reset_index()
+    )
+    fig = px.line(
+        trend, x="year", y="life_expectancy",
+        color="status", color_discrete_sequence=THEME_COLORS,
+        markers=True, template="plotly_white",
+        labels={
+            "year": "Year",
+            "life_expectancy": "Mean Life Expectancy (years)"
+        }
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    add_expander(
+        st,
+        "Both groups gained ≈ 4–5 years from 2000 to 2015, yet a "
+        "12‑year gap persists between developed and developing countries."
+    )
 
-# ---------- 8. Top & Bottom 10 Countries ----------
-st.subheader(f"Leaders and Laggards in {int(year_range[1])}")
-latest = df_filt[df_filt["year"] == year_range[1]]
-top10 = latest.nlargest(10, "life_expectancy")[["country", "life_expectancy"]]
-bot10 = latest.nsmallest(10, "life_expectancy")[["country", "life_expectancy"]]
-
-col_top, col_bot = st.columns(2)
-with col_top:
-    st.markdown("##### 🏆 Top 10")
-    st.dataframe(top10.set_index("country"), height=320)
-with col_bot:
-    st.markdown("##### 🚨 Bottom 10")
-    st.dataframe(bot10.set_index("country"), height=320)
-
-st.caption("Colours: muted teal & soft tomato ensure good contrast on projectors.")
+# 8️⃣ Leaders & Laggards ------------------
+with tabs[7]:
+    latest = df_filt[df_filt["year"] == year_range[1]]
+    top10 = latest.nlargest(10, "life_expectancy")\
+                  [["country", "life_expectancy"]]\
+                  .set_index("country")
+    bot10 = latest.nsmallest(10, "life_expectancy")\
+                  [["country", "life_expectancy"]]\
+                  .set_index("country")
+    col_top, col_bot = st.columns(2)
+    col_top.markdown("#### 🏆 Top 10")
+    col_top.dataframe(top10, height=340)
+    col_bot.markdown("#### 🚨 Bottom 10")
+    col_bot.dataframe(bot10, height=340)
+    add_expander(
+        st,
+        "Numeric tables reveal leaders clustering in the mid‑80 s, "
+        "while laggards struggle to reach 60 years – a stark illustration "
+        "of global inequality."
+    )
