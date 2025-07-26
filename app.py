@@ -5,7 +5,7 @@ import numpy as np
 import altair as alt
 from pathlib import Path
 
-DATA_FILE = Path(__file__).with_name("Life Expectancy Data.csv")
+DATA_FILE = Path(__file__).with_name("life_expectancy.csv")
 
 # ------------------------------------------------------------------ #
 # 1.  Load & sanitise the dataset                                    #
