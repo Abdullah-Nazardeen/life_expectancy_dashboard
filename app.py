@@ -1,6 +1,6 @@
 import chainlit as cl
 from chainlit.input_widget import Slider, Select, Tags
-from chainlit.element import Plotly, Markdown
+from chainlit.element import Plotly
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -20,7 +20,6 @@ def load_data() -> pd.DataFrame:
     return df
 
 def get_status_filter_vals(df):
-    # User-facing options: Both, Developed, Developing
     opts = sorted(df.status.unique())
     return ["Both"] + opts
 
@@ -108,7 +107,6 @@ async def render_dashboard(filters: dict):
             ).update_layout(height=450)
         )
         # 4. 2000‑2015 Trend
-        # Use all data for this chart
         sel_statuses = (
             df.status.unique().tolist()
             if status_sel == "Both" else [status_sel]
@@ -144,8 +142,8 @@ async def render_dashboard(filters: dict):
         )
 
     # --- SEND DASHBOARD ---
-    elements = [Markdown(kpi_md)] + [Plotly(name=fig.layout.title.text, figure=fig) for fig in figs]
-    await cl.Message(content=None, elements=elements).send()
+    elements = [Plotly(name=fig.layout.title.text, figure=fig) for fig in figs]
+    await cl.Message(content=kpi_md, elements=elements).send()
 
 @cl.on_chat_start
 async def start():
