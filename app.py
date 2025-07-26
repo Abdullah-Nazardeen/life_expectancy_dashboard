@@ -74,23 +74,32 @@ def add_expander(tab_container, summary_text):
 
 # 1️⃣ Income vs Longevity -----------------
 with tabs[0]:
+    st.subheader("Income and Longevity (GDP per capita)")
     fig = px.scatter(
         df_filt, x="gdp", y="life_expectancy",
-        color="status", color_discrete_sequence=THEME_COLORS,
+        color="status",
+        color_discrete_sequence=THEME_COLORS,  # teal & tomato
         opacity=0.35, template="plotly_white",
         labels={
             "gdp": "GDP per capita (USD, current)",
             "life_expectancy": "Life Expectancy (years)"
         },
-        trendline="lowess", trendline_scope="overall"
+        trendline="lowess",        # keep LOWESS
+        trendline_scope="trace"    # one curve per status (teal + tomato)
     )
     fig.update_traces(marker=dict(size=6))
-    fig.update_layout(yaxis_range=[35, 90], legend_title="Status")
+    fig.update_layout(
+        yaxis_range=[35, 90],
+        legend_title="Status",
+        height=550
+    )
     st.plotly_chart(fig, use_container_width=True)
     add_expander(
         st,
-        "The LOWESS curve reveals the classic Preston‑style saturation: "
-        "longevity rises steeply with income up to about $10 k, then gains taper."
+        "Each coloured LOWESS curve shows how longevity rises with income **within "
+        "its own group**. Developing countries (tomato) gain steeply up to ≈ $10 k "
+        "before levelling off, while developed nations (teal) start higher and show "
+        "diminishing returns, illustrating the classic Preston‑curve saturation."
     )
 
 # 2️⃣ Education vs Longevity --------------
