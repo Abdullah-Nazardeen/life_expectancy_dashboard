@@ -1,162 +1,182 @@
-import streamlit as st
+import chainlit as cl
+from chainlit.input_widget import Slider, Tags
+from chainlit.element import Plotly
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from pathlib import Path
 
-###############################################################################
-# 1. DATA LOADING  (cached so repeated filter changes feel instantaneous)
-###############################################################################
-@st.cache_data
-def load_data(csv_path: str = "life_expectancy.csv") -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
-    # Clean some column names just in case
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+DATA_PATH = Path(__file__).parent / "life_expectancy.csv"
+
+@cl.cache
+def load_data() -> pd.DataFrame:
+    df = pd.read_csv(DATA_PATH)
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+    )
     return df
 
-df = load_data()
+def filter_df(df, year, statuses, countries):
+    mask = (df.year == year) & (df.status.isin(statuses))
+    if countries:
+        mask &= df.country.isin(countries)
+    return df[mask]
 
-###############################################################################
-# 2. SIDEBAR – GLOBAL FILTERS
-###############################################################################
-st.sidebar.title("🔍 Filters")
+async def render_dashboard(filters: dict):
+    df = cl.user_session.get("df")
+    year = filters["year"]
+    status_sel = filters["status"]
+    country_sel = filters["countries"]
 
-# Year slider (single‑select for the document’s charts, default=2015)
-min_year, max_year = int(df.year.min()), int(df.year.max())
-year = st.sidebar.slider("Year", min_year, max_year, 2015)
+    df_year = filter_df(df, year, status_sel, country_sel)
 
-# Development status filter
-status_options = df.status.unique().tolist()
-status_sel = st.sidebar.multiselect("Development status", status_options, status_options)
-
-# Country filter (optional multi‑select)
-all_countries = df.country.unique().tolist()
-country_sel = st.sidebar.multiselect("Country (optional)", all_countries)
-
-# Filter the dataframe
-mask = (df.year == year) & (df.status.isin(status_sel))
-if country_sel:
-    mask &= df.country.isin(country_sel)
-df_year = df[mask]
-
-###############################################################################
-# 3. KPI CARDS
-###############################################################################
-st.title("🌍 Global Life‑Expectancy Dashboard")
-st.caption("Interactive analytics board (Streamlit + Plotly)")
-
-kpi_cols = st.columns(4)
-
-with kpi_cols[0]:
-    st.metric("Average Life‑Expectancy (yrs)", f"{df_year.life_expectancy.mean():.1f}")
-
-with kpi_cols[1]:
-    best_country = df_year.loc[df_year.life_expectancy.idxmax(), "country"]
-    best_val = df_year.life_expectancy.max()
-    st.metric("Highest Country", f"{best_val:.1f}", best_country)
-
-with kpi_cols[2]:
-    worst_country = df_year.loc[df_year.life_expectancy.idxmin(), "country"]
-    worst_val = df_year.life_expectancy.min()
-    st.metric("Lowest Country", f"{worst_val:.1f}", worst_country)
-
-with kpi_cols[3]:
-    gdp_mean = df_year.gdp.mean() / 1_000  # ‘000 USD for readability
-    st.metric("Avg GDP per Capita\n(×$1 000)", f"{gdp_mean:.1f}")
-
-st.divider()
-
-###############################################################################
-# 4. CHARTS (organised in tabs)
-###############################################################################
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Top‑10 Countries", "Status Box‑plot", "GDP Scatter", "Trend (2000‑15)", "Schooling Scatter"]
-)
-
-# --- Tab 1 – Top‑10 bar ------------------------------------------------------
-with tab1:
-    st.subheader(f"🏅 Top‑10 Countries by Life‑Expectancy – {year}")
-    top10 = (
-        df[df.year == year]
-        .nlargest(10, "life_expectancy")
-        .sort_values("life_expectancy")
+    # --- KPIs ---
+    kpi_rows = []
+    if len(df_year) > 0:
+        avg_le = df_year.life_expectancy.mean()
+        best = df_year.loc[df_year.life_expectancy.idxmax()]
+        worst = df_year.loc[df_year.life_expectancy.idxmin()]
+        avg_gdp = df_year.gdp.mean() / 1_000
+        kpi_rows = [
+            ["**Average Life‑Expectancy (yrs)**", f"{avg_le:.1f}"],
+            ["**Highest Country**", f"{best.country.title()} ({best.life_expectancy:.1f} yrs)"],
+            ["**Lowest Country**", f"{worst.country.title()} ({worst.life_expectancy:.1f} yrs)"],
+            ["**Avg GDP per Capita (×$1 000 USD)**", f"{avg_gdp:.1f}"],
+        ]
+    else:
+        kpi_rows = [
+            ["No data for these filters", ""]
+        ]
+    kpi_md = (
+        f"**🌍 Global Life‑Expectancy Dashboard – {year}**\n\n"
+        "| Metric | Value |\n"
+        "|--------|-------|\n" +
+        "\n".join([f"| {a} | {b} |" for a, b in kpi_rows])
     )
-    fig = px.bar(
-        top10,
-        x="life_expectancy",
-        y="country",
-        orientation="h",
-        color="life_expectancy",
-        color_continuous_scale="Blues",
-        labels={"life_expectancy": "Years", "country": ""},
-    )
-    fig.update_layout(height=500, yaxis_title="")
-    st.plotly_chart(fig, use_container_width=True)
 
-# --- Tab 2 – Box & Whisker ---------------------------------------------------
-with tab2:
-    st.subheader(f"📦 Life‑Expectancy by Development Status – {year}")
-    fig = px.box(
-        df[df.year == year],
-        x="status",
-        y="life_expectancy",
-        color="status",
-        points="all",
-        labels={"life_expectancy": "Years", "status": ""},
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    # --- CHARTS ---
+    figs = []
+    if len(df_year) > 0:
+        # 1. Top‑10 bar
+        top10 = df_year.nlargest(10, "life_expectancy").sort_values("life_expectancy")
+        figs.append(
+            px.bar(
+                top10,
+                x="life_expectancy",
+                y="country",
+                orientation="h",
+                color="life_expectancy",
+                color_continuous_scale="Blues",
+                labels={"life_expectancy": "Years", "country": ""},
+                title=f"🏅 Top‑10 Countries by Life‑Expectancy — {year}",
+            ).update_layout(height=400)
+        )
+        # 2. Status Box‑plot
+        figs.append(
+            px.box(
+                df_year,
+                x="status",
+                y="life_expectancy",
+                color="status",
+                points="all",
+                labels={"life_expectancy": "Years", "status": ""},
+                title=f"📦 Life‑Expectancy by Development Status — {year}",
+            ).update_layout(height=400)
+        )
+        # 3. GDP Scatter
+        figs.append(
+            px.scatter(
+                df_year,
+                x="gdp",
+                y="life_expectancy",
+                color="status",
+                hover_name="country",
+                size="population" if "population" in df_year.columns else None,
+                log_x=True,
+                labels={"gdp": "GDP per Capita (log‑scale USD)", "life_expectancy": "Years"},
+                title=f"💰 GDP vs Life‑Expectancy — {year}",
+            ).update_layout(height=450)
+        )
+        # 4. 2000‑2015 Trend
+        sel_statuses = status_sel
+        trend_df = (
+            df[df.status.isin(sel_statuses)]
+            .groupby(["year", "status"], as_index=False)["life_expectancy"]
+            .mean()
+        )
+        figs.append(
+            px.line(
+                trend_df,
+                x="year",
+                y="life_expectancy",
+                color="status",
+                markers=True,
+                labels={"life_expectancy": "Avg Life‑Expectancy (yrs)", "year": ""},
+                title="📈 Global Trend 2000‑2015 (Developed vs Developing)",
+            ).update_layout(height=400)
+        )
+        # 5. Schooling Scatter
+        figs.append(
+            px.scatter(
+                df_year,
+                x="schooling",
+                y="life_expectancy",
+                trendline="ols",
+                color="status",
+                hover_name="country",
+                labels={"schooling": "Average Years of Schooling", "life_expectancy": "Years"},
+                title=f"🎓 Schooling vs Life‑Expectancy — {year}",
+            ).update_layout(height=450)
+        )
 
-# --- Tab 3 – GDP Scatter -----------------------------------------------------
-with tab3:
-    st.subheader(f"💰 GDP vs Life‑Expectancy – {year}")
-    fig = px.scatter(
-        df[df.year == year],
-        x="gdp",
-        y="life_expectancy",
-        color="status",
-        hover_name="country",
-        size="population",
-        log_x=True,
-        labels={"gdp": "GDP per Capita (log‑scale USD)", "life_expectancy": "Years"},
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    elements = [Plotly(name=fig.layout.title.text, figure=fig) for fig in figs]
+    await cl.Message(content=kpi_md, elements=elements).send()
 
-# --- Tab 4 – 2000‑2015 Trend -------------------------------------------------
-with tab4:
-    st.subheader("📈 Global Trend 2000‑2015 (Developed vs Developing)")
-    trend_df = (
-        df[df.status.isin(status_sel)]
-        .groupby(["year", "status"], as_index=False)["life_expectancy"]
-        .mean()
-    )
-    fig = px.line(
-        trend_df,
-        x="year",
-        y="life_expectancy",
-        color="status",
-        markers=True,
-        labels={"life_expectancy": "Avg Life‑Expectancy (yrs)", "year": ""},
-    )
-    st.plotly_chart(fig, use_container_width=True)
+@cl.on_chat_start
+async def start():
+    df = load_data()
+    cl.user_session.set("df", df)
+    years = sorted(df.year.unique())
+    status_opts = sorted(df.status.unique().tolist())
+    country_opts = sorted(df.country.unique().tolist())
 
-# --- Tab 5 – Schooling vs Life‑Expectancy ------------------------------------
-with tab5:
-    st.subheader(f"🎓 Schooling vs Life‑Expectancy – {year}")
-    fig = px.scatter(
-        df[df.year == year],
-        x="schooling",
-        y="life_expectancy",
-        trendline="ols",
-        color="status",
-        hover_name="country",
-        labels={"schooling": "Average Years of Schooling", "life_expectancy": "Years"},
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    settings = await cl.ChatSettings(
+        label="🔍 Filters",
+        inputs=[
+            Slider(
+                id="year",
+                label="Year",
+                min=int(years[0]),
+                max=int(years[-1]),
+                initial=int(years[-1]),
+                step=1,
+            ),
+            Tags(
+                id="status",
+                label="Development status",
+                initial=status_opts,
+                options=status_opts,
+            ),
+            Tags(
+                id="countries",
+                label="Country (optional)",
+                initial=[],
+                options=country_opts
+            ),
+        ],
+    ).send()
 
-st.divider()
-with st.expander("About this dashboard"):
-    st.markdown(
-        """
-*Data source:* `life_expectancy.csv` (WHO & World‑Bank compiled).  
-Charts reproduced from the documentation you supplied and re‑implemented with Plotly for full interactivity inside Streamlit.
-"""
-    )
+    cl.user_session.set("filters", settings)
+    await render_dashboard(settings)
+
+@cl.on_settings_update
+async def update(settings: dict):
+    cl.user_session.set("filters", settings)
+    await render_dashboard(settings)
+
+if __name__ == "__main__":
+    import subprocess, sys
+    subprocess.run([sys.executable, "-m", "chainlit", "run", __file__])
