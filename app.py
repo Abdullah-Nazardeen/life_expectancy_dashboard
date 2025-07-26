@@ -6,7 +6,7 @@ import plotly.express as px
 # --- LOAD DATA ---
 @st.cache_data
 def load_data():
-    df = pd.read_csv('Life Expectancy Data.csv')
+    df = pd.read_csv('life_expectancy.csv')
     df.columns = df.columns.str.strip()
     return df
 
