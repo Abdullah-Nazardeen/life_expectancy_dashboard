@@ -104,6 +104,7 @@ with tabs[0]:
 
 # 2️⃣ Education vs Longevity --------------
 with tabs[1]:
+    st.subheader("Education and Longevity")
     fig = px.scatter(
         df_filt, x="schooling", y="life_expectancy",
         color="status", color_discrete_sequence=THEME_COLORS,
@@ -129,6 +130,7 @@ with tabs[1]:
 
 # 3️⃣ Schooling vs Residual ---------------
 with tabs[2]:
+    st.subheader("Education Benefit Beyond Income")
     fig = px.scatter(
         df_filt, x="schooling", y="residual_le",
         color="status", color_discrete_sequence=THEME_COLORS,
@@ -149,6 +151,7 @@ with tabs[2]:
 
 # 4️⃣ BMI vs Residual ---------------------
 with tabs[3]:
+    st.subheader("BMI and Residual Life Expectancy")
     fig = px.scatter(
         df_filt, x="bmi", y="residual_le",
         color="status", color_discrete_sequence=THEME_COLORS,
@@ -168,6 +171,7 @@ with tabs[3]:
 
 # 5️⃣ Alcohol -----------------------------
 with tabs[4]:
+    st.subheader("Alcohol Consumption and Longevity")
     fig = px.scatter(
         df_filt, x="alcohol", y="life_expectancy",
         color="status", color_discrete_sequence=THEME_COLORS,
@@ -186,6 +190,7 @@ with tabs[4]:
 
 # 6️⃣ Vaccination -------------------------
 with tabs[5]:
+    st.subheader("Vaccination Coverage and Longevity")
     vacc = df_filt[df_filt["diphtheria"] >= 20]
     fig = px.scatter(
         vacc, x="diphtheria", y="life_expectancy",
@@ -208,6 +213,7 @@ with tabs[5]:
 
 # 7️⃣ Time Trend --------------------------
 with tabs[6]:
+    st.subheader("Life‑Expectancy Progress 2000 – 2015")
     trend = (
         df_filt.groupby(["year", "status"])["life_expectancy"]
         .mean().reset_index()
@@ -230,6 +236,7 @@ with tabs[6]:
 
 # 8️⃣ Leaders & Laggards ------------------
 with tabs[7]:
+    st.subheader("Global Leaders and Laggards")
     latest = df_filt[df_filt["year"] == year_range[1]]
     top10 = latest.nlargest(10, "life_expectancy")\
                   [["country", "life_expectancy"]]\
