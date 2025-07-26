@@ -1,176 +1,93 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
+import altair as alt
 
-# --- LOAD DATA ---
 @st.cache_data
 def load_data():
-    df = pd.read_csv('life_expectancy.csv')
-    df.columns = df.columns.str.strip()
+    df = pd.read_csv("life_expectancy.csv")          # <- repo file name
+    df.columns = df.columns.str.strip()              # remove trailing spaces
+    df["VaccinationCoverage"] = df[["Hepatitis B", "Polio", "Diphtheria"]].mean(1)
+    df["log_GDP"] = np.log10(df["GDP"] + 1)
     return df
 
 df = load_data()
 
-# --- SIDEBAR FILTERS ---
-st.sidebar.title("Filters")
+# ---------- SIDEBAR FILTERS ----------
+st.sidebar.header("Filters")
 
-# Filter: Status (Developed/Developing)
-status_options = df['Status'].dropna().unique().tolist()
-status_filter = st.sidebar.multiselect("Country Status", status_options, default=status_options)
+status_sel   = st.sidebar.multiselect("Country status", df["Status"].unique(), default=list(df["Status"].unique()))
+year_sel     = st.sidebar.slider("Year", int(df.Year.min()), int(df.Year.max()), (2000, 2015))
+country_sel  = st.sidebar.multiselect("Countries", sorted(df.Country.unique()), default=[])
+gdp_sel      = st.sidebar.slider("GDP per capita (USD)", float(df.GDP.min()), float(df.GDP.max()), (float(df.GDP.min()), float(df.GDP.max())))
+hexp_sel     = st.sidebar.slider("Health‑spend (% GDP)", float(df["percentage expenditure"].min()),
+                                 float(df["percentage expenditure"].max()),
+                                 (float(df["percentage expenditure"].min()),
+                                  float(df["percentage expenditure"].max())))
 
-# Filter: Country
-country_options = df[df['Status'].isin(status_filter)]['Country'].dropna().unique().tolist()
-country_filter = st.sidebar.multiselect("Country", country_options, default=country_options)
-
-# Filter: Year
-year_min, year_max = int(df['Year'].min()), int(df['Year'].max())
-year_filter = st.sidebar.slider("Year", year_min, year_max, (year_min, year_max), 1)
-
-# Filter: GDP
-gdp_min, gdp_max = int(df['GDP'].min()), int(df['GDP'].max())
-gdp_filter = st.sidebar.slider("GDP per capita (USD)", gdp_min, gdp_max, (gdp_min, gdp_max), 100)
-
-# Filter: Health Expenditure (% of GDP)
-if 'percentage expenditure on health' in df.columns.str.lower():
-    col_health_exp = [col for col in df.columns if col.lower().startswith('percentage')][0]
-else:
-    col_health_exp = "percentage expenditure on health"
-healthexp_min, healthexp_max = float(df[col_health_exp].min()), float(df[col_health_exp].max())
-healthexp_filter = st.sidebar.slider("Health Expenditure (% of GDP)", 
-                                     float(healthexp_min), float(healthexp_max),
-                                     (float(healthexp_min), float(healthexp_max)), 0.1)
-
-# -- Additional filters --
-school_min, school_max = float(df['Schooling'].min()), float(df['Schooling'].max())
-school_filter = st.sidebar.slider("Schooling Years", school_min, school_max, (school_min, school_max), 0.5)
-
-bmi_min, bmi_max = float(df['BMI'].min()), float(df['BMI'].max())
-bmi_filter = st.sidebar.slider("Average BMI", bmi_min, bmi_max, (bmi_min, bmi_max), 0.5)
-
-# --- FILTER DATASET ---
-filtered_df = df[
-    (df['Status'].isin(status_filter)) &
-    (df['Country'].isin(country_filter)) &
-    (df['Year'] >= year_filter[0]) & (df['Year'] <= year_filter[1]) &
-    (df['GDP'] >= gdp_filter[0]) & (df['GDP'] <= gdp_filter[1]) &
-    (df[col_health_exp] >= healthexp_filter[0]) & (df[col_health_exp] <= healthexp_filter[1]) &
-    (df['Schooling'] >= school_filter[0]) & (df['Schooling'] <= school_filter[1]) &
-    (df['BMI'] >= bmi_filter[0]) & (df['BMI'] <= bmi_filter[1])
-]
-
-# --- TITLE & INTRO ---
-st.title("🌍 Life Expectancy Data Explorer")
-st.markdown("""
-A **data story** on what shapes human longevity around the world.  
-*Explore, filter, and interact* with the data to find what drives life expectancy.
-""")
-
-# --- STORY FLOW: DASHBOARD SECTIONS ---
-
-# 1. Key Metric Cards
-st.subheader("📊 Key Stats")
-kpi1 = filtered_df['Life expectancy'].mean()
-kpi2 = filtered_df['GDP'].mean()
-kpi3 = filtered_df['Schooling'].mean()
-kpi4 = filtered_df[col_health_exp].mean()
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Avg. Life Expectancy", f"{kpi1:.2f} yrs")
-col2.metric("Avg. GDP per Capita", f"${kpi2:,.0f}")
-col3.metric("Avg. Schooling Years", f"{kpi3:.2f}")
-col4.metric("Avg. Health Spend %GDP", f"{kpi4:.2f}%")
-
-# 2. GDP vs Life Expectancy
-st.markdown("#### 1. GDP vs Life Expectancy")
-fig_a = px.scatter(
-    filtered_df, x='GDP', y='Life expectancy', 
-    color='Status', hover_name='Country', trendline='ols',
-    labels={"GDP": "GDP per capita (USD)", "Life expectancy": "Life Expectancy (yrs)"}
+mask = (
+    df.Status.isin(status_sel)
+    & df.Year.between(*year_sel)
+    & df.GDP.between(*gdp_sel)
+    & df["percentage expenditure"].between(*hexp_sel)
 )
-fig_a.update_xaxes(type='log')
-st.plotly_chart(fig_a, use_container_width=True)
-st.caption("Life expectancy rises with GDP, but gains flatten after basic needs are met.")
 
-# 3. Schooling Years vs Life Expectancy
-st.markdown("#### 2. Schooling vs Life Expectancy")
-fig_b = px.scatter(
-    filtered_df, x='Schooling', y='Life expectancy',
-    color='Status', hover_name='Country', trendline='ols',
-    labels={"Schooling": "Avg. Years of Schooling", "Life expectancy": "Life Expectancy (yrs)"}
-)
-st.plotly_chart(fig_b, use_container_width=True)
-st.caption("Each additional year of school brings higher life expectancy.")
+if country_sel:
+    mask &= df.Country.isin(country_sel)
 
-# 4. Schooling Effect after GDP (Residuals)
-st.markdown("#### 3. Schooling Effect (After GDP controlled)")
-if len(filtered_df) > 10:
-    filtered_df = filtered_df.copy()
-    filtered_df['log_gdp'] = np.log1p(filtered_df['GDP'])
-    m, b = np.polyfit(filtered_df['log_gdp'], filtered_df['Life expectancy'], 1)
-    filtered_df['residual'] = filtered_df['Life expectancy'] - (m * filtered_df['log_gdp'] + b)
-    fig_c = px.scatter(
-        filtered_df, x='Schooling', y='residual',
-        color='Status', hover_name='Country',
-        labels={"Schooling": "Avg. Years of Schooling", "residual": "Life Expectancy Residual (yrs)"}
+data = df[mask]
+
+# ---------- LAYOUT ----------
+st.title("🌍  Life‑Expectancy Explorer (2000 – 2015)")
+
+def scatter(x, y, tooltip, title):
+    return (
+        alt.Chart(data)
+        .mark_circle(opacity=0.4)
+        .encode(
+            x=x, y=y,
+            size=alt.Size("Schooling", legend=None, scale=alt.Scale(range=[10,300])),
+            tooltip=tooltip,
+        )
+        .interactive()
+        .properties(height=350, title=title)
     )
-    fig_c.add_hline(y=0, line_dash="dash")
-    st.plotly_chart(fig_c, use_container_width=True)
-    st.caption("At same GDP, higher schooling still predicts longer lives (positive residuals).")
-else:
-    st.info("Not enough data for residual analysis. Expand filters to see this chart.")
 
-# 5. BMI vs Life Expectancy
-st.markdown("#### 4. BMI vs Life Expectancy")
-fig_d = px.scatter(
-    filtered_df, x='BMI', y='Life expectancy', color='Status',
-    hover_name='Country',
-    labels={"BMI": "Average BMI", "Life expectancy": "Life Expectancy (yrs)"}
-)
-st.plotly_chart(fig_d, use_container_width=True)
-st.caption("Life expectancy peaks at moderate BMI, drops at under- or overweight.")
-
-# 6. Alcohol Consumption vs Life Expectancy
-st.markdown("#### 5. Alcohol vs Life Expectancy")
-fig_e = px.scatter(
-    filtered_df, x='Alcohol', y='Life expectancy', color='Status',
-    hover_name='Country',
-    labels={"Alcohol": "Alcohol Consumption (litres/capita)", "Life expectancy": "Life Expectancy (yrs)"}
-)
-st.plotly_chart(fig_e, use_container_width=True)
-st.caption("Wealthy countries can mask alcohol’s harm, but heavy drinking lowers life expectancy overall.")
-
-# 7. Vaccination vs Life Expectancy
-st.markdown("#### 6. Vaccination (Hepatitis-B) vs Life Expectancy")
-fig_f = px.scatter(
-    filtered_df, x='Hepatitis B', y='Life expectancy', color='Status',
-    hover_name='Country',
-    labels={"Hepatitis B": "Hepatitis-B Coverage (%)", "Life expectancy": "Life Expectancy (yrs)"}
-)
-st.plotly_chart(fig_f, use_container_width=True)
-st.caption("More childhood vaccination, longer average life.")
-
-# 8. Life Expectancy over Time
-st.markdown("#### 7. Life Expectancy Over Time (Developed vs Developing)")
-time_df = filtered_df.groupby(['Year', 'Status'])['Life expectancy'].mean().reset_index()
-fig_g = px.line(
-    time_df, x='Year', y='Life expectancy', color='Status',
-    labels={"Life expectancy": "Avg. Life Expectancy (yrs)"}
-)
-st.plotly_chart(fig_g, use_container_width=True)
-st.caption("Developing nations are rapidly catching up to developed ones.")
-
-# 9. Top and Bottom 10 Countries (latest year in filter)
-st.markdown("#### 8. Top 10 and Bottom 10 Countries by Life Expectancy")
-latest_year = filtered_df['Year'].max()
-df_latest = filtered_df[filtered_df['Year'] == latest_year]
-top10 = df_latest.nlargest(10, 'Life expectancy')
-bot10 = df_latest.nsmallest(10, 'Life expectancy')
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("**Top 10**")
-    st.dataframe(top10[['Country', 'Life expectancy', 'GDP', 'Status']].set_index('Country'))
-with col2:
-    st.markdown("**Bottom 10**")
-    st.dataframe(bot10[['Country', 'Life expectancy', 'GDP', 'Status']].set_index('Country'))
+    st.altair_chart(scatter("log_GDP", "Life expectancy", ["Country", "Year"], "GDP vs Life expectancy") )
+    st.altair_chart(scatter("Schooling", "Life expectancy", ["Country", "Year"], "Schooling vs Life expectancy"))
 
-st.caption("See which countries are leading and lagging in longevity.")
+with col2:
+    st.altair_chart(scatter("BMI", "Life expectancy", ["Country", "Year"], "BMI vs Life expectancy"))
+    st.altair_chart(scatter("Alcohol", "Life expectancy", ["Country", "Year"], "Alcohol vs Life expectancy") )
+
+st.altair_chart(
+    scatter("VaccinationCoverage", "Life expectancy", ["Country", "Year"], "Vaccination coverage vs Life expectancy")
+)
+
+# ----- Trend line -----
+trend = (
+    data.groupby(["Year", "Status"])["Life expectancy"].mean().reset_index()
+)
+line = (
+    alt.Chart(trend)
+    .mark_line(point=True)
+    .encode(x="Year:O", y="Life expectancy", color="Status")
+    .properties(height=350, title="Average life expectancy over time")
+)
+st.altair_chart(line)
+
+# ----- Top / Bottom tables -----
+latest = data[data.Year == data.Year.max()]
+top10    = latest.groupby("Country")["Life expectancy"].mean().nlargest(10)
+bottom10 = latest.groupby("Country")["Life expectancy"].mean().nsmallest(10)
+
+col1, col2 = st.columns(2)
+col1.subheader("Top 10 countries")
+col1.dataframe(top10.round(1))
+col2.subheader("Bottom 10 countries")
+col2.dataframe(bottom10.round(1))
+
+st.caption("Bubble size ∝ schooling years · Data: WHO, UN, World Bank (2000‑2015)")
+
