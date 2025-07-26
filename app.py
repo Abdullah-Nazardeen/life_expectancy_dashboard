@@ -1,225 +1,166 @@
 import chainlit as cl
-from chainlit.input_widget import Select, Slider, Tags
-from chainlit.element import Plotly
+from chainlit.input_widget import Slider, Multiselect, Tags
+from chainlit.element import Plotly, Markdown
 import pandas as pd
 import numpy as np
 import plotly.express as px
 from pathlib import Path
 
-DATA_PATH = Path(__file__).parent / "Life Expectancy Data.csv"
+# ───────────────── DATA LOADING ─────────────────
+DATA_PATH = Path(__file__).parent / "life_expectancy.csv"
 
-
-# ────────────────────────────────  DATA  ────────────────────────────────
 @cl.cache
-def load_data():
+def load_data() -> pd.DataFrame:
     df = pd.read_csv(DATA_PATH)
-    df.columns = df.columns.str.strip()
-
-    # helpers
-    df["log_gdp"] = np.log1p(df["GDP"])
-    mask = df[["log_gdp", "Life expectancy"]].notna().all(axis=1)
-    m, b = np.polyfit(df.loc[mask, "log_gdp"], df.loc[mask, "Life expectancy"], 1)
-    df["LE_residual"] = df["Life expectancy"] - (m * df["log_gdp"] + b)
+    # match your Streamlit cleaning
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+    )
     return df
 
-
-def apply_filters(df, f):
-    sel = pd.Series(True, index=df.index)
-
-    if f["status"] != "Both":
-        sel &= df["Status"] == f["status"]
-
-    if f["countries"]:
-        sel &= df["Country"].isin(f["countries"])
-
-    sel &= df["GDP"].between(f["min_gdp"], f["max_gdp"])
-    sel &= df["percentage expenditure"].between(f["min_hexp"], f["max_hexp"])
-
-    return df[sel]
-
-
-# ────────────────────────────────  CHARTS  ────────────────────────────────
-def chart_gdp(df):
-    return px.scatter(
-        df,
-        x="GDP",
-        y="Life expectancy",
-        color="Status",
-        log_x=True,
-        hover_name="Country",
-        trendline="ols",
-        title="GDP vs Life‑Expectancy",
-    )
-
-
-def chart_schooling(df):
-    return px.scatter(
-        df,
-        x="Schooling",
-        y="Life expectancy",
-        color="Status",
-        hover_name="Country",
-        title="Schooling vs Life‑Expectancy",
-    )
-
-
-def chart_bmi(df):
-    return px.scatter(
-        df,
-        x="BMI",
-        y="Life expectancy",
-        color="Status",
-        hover_name="Country",
-        title="BMI vs Life‑Expectancy",
-    )
-
-
-def chart_alcohol(df):
-    return px.scatter(
-        df,
-        x="Alcohol",
-        y="Life expectancy",
-        color="Status",
-        hover_name="Country",
-        title="Alcohol Consumption vs Life‑Expectancy",
-    )
-
-
-def chart_vax(df):
-    return px.scatter(
-        df,
-        x="Hepatitis B",
-        y="Life expectancy",
-        color="Status",
-        hover_name="Country",
-        title="Hep‑B Vaccination vs Life‑Expectancy",
-    )
-
-
-def chart_trend(df):
-    trend = (
-        df.groupby(["Year", "Status"])["Life expectancy"]
-        .mean()
-        .reset_index()
-        .pivot(index="Year", columns="Status", values="Life expectancy")
-        .reset_index()
-    )
-    return px.line(
-        trend,
-        x="Year",
-        y=trend.columns[1:],
-        labels={"value": "Life Expectancy", "variable": "Status"},
-        title="Developed vs Developing (2000‑2015)",
-    )
-
-
-def chart_bar_10(df, top=True):
-    last = df[df["Year"] == df["Year"].max()].dropna(subset=["Life expectancy"])
-    use = last.nlargest(10, "Life expectancy") if top else last.nsmallest(10, "Life expectancy")
-    ttl = "Top 10 (Highest) 2015" if top else "Bottom 10 (Lowest) 2015"
-    return px.bar(use, x="Country", y="Life expectancy", title=ttl)
-
-
-# ────────────────────────────────  DASHBOARD  ────────────────────────────────
-async def render_dashboard(filters):
+# ───────────────── RENDERER ────────────────────
+async def render_dashboard(filters: dict):
     df = cl.user_session.get("df")
-    fdf = apply_filters(df, filters)
+    year = filters["year"]
+    status_sel = filters["status"]
+    country_sel = filters["countries"]
 
-    figs = [
-        chart_gdp(fdf),
-        chart_schooling(fdf),
-        chart_bmi(fdf),
-        chart_alcohol(fdf),
-        chart_vax(fdf),
-        chart_trend(fdf),
-        chart_bar_10(fdf, top=True),
-        chart_bar_10(fdf, top=False),
-    ]
+    # Filter for selected year/status/countries
+    mask = (df.year == year) & (df.status.isin(status_sel))
+    if country_sel:
+        mask &= df.country.isin(country_sel)
+    df_year = df[mask]
 
-    elements = [Plotly(name=fig.layout.title.text, figure=fig) for fig in figs]
+    # ── KPI METRICS ──
+    avg_le = df_year.life_expectancy.mean()
+    best = df_year.loc[df_year.life_expectancy.idxmax()]
+    worst = df_year.loc[df_year.life_expectancy.idxmin()]
+    avg_gdp = df_year.gdp.mean() / 1_000
 
-    await cl.Message(
-        content=f"📊 **Dashboard refreshed – {len(fdf):,} rows after filters**",
-        elements=elements,
-    ).send()
+    kpi_md = f"""
+**🌍 Global Life‑Expectancy Dashboard – {year}**
 
+| Metric                                   | Value                        |
+|-----------------------------------------:|:-----------------------------|
+| **Average Life‑Expectancy (yrs)**        | {avg_le:.1f}                 |
+| **Highest Country**                      | {best.country.title()} ({best.life_expectancy:.1f} yrs) |
+| **Lowest Country**                       | {worst.country.title()} ({worst.life_expectancy:.1f} yrs) |
+| **Avg GDP per Capita (×$1 000 USD)**     | {avg_gdp:.1f}                |
+"""
+    # ── CHARTS ──
+    figs = []
 
-# ────────────────────────────────  LIFE‑CYCLE HOOKS  ─────────────────────────
+    # 1️⃣ Top‑10 bar
+    top10 = df_year.nlargest(10, "life_expectancy").sort_values("life_expectancy")
+    figs.append(
+        px.bar(
+            top10,
+            x="life_expectancy",
+            y="country",
+            orientation="h",
+            color="life_expectancy",
+            labels={"life_expectancy": "Years", "country": ""},
+            title=f"🏅 Top‑10 Countries by Life‑Expectancy — {year}",
+        ).update_layout(height=400)
+    )
+
+    # 2️⃣ Status Box‑plot
+    figs.append(
+        px.box(
+            df_year,
+            x="status",
+            y="life_expectancy",
+            color="status",
+            points="all",
+            labels={"life_expectancy": "Years", "status": ""},
+            title=f"📦 Life‑Expectancy by Development Status — {year}",
+        ).update_layout(height=400)
+    )
+
+    # 3️⃣ GDP Scatter
+    figs.append(
+        px.scatter(
+            df_year,
+            x="gdp",
+            y="life_expectancy",
+            color="status",
+            hover_name="country",
+            size="population",
+            log_x=True,
+            labels={"gdp": "GDP per Capita (log‑scale USD)", "life_expectancy": "Years"},
+            title=f"💰 GDP vs Life‑Expectancy — {year}",
+        ).update_layout(height=450)
+    )
+
+    # 4️⃣ 2000‑2015 Trend
+    trend_df = (
+        df[df.status.isin(status_sel)]
+        .groupby(["year", "status"], as_index=False)["life_expectancy"]
+        .mean()
+    )
+    figs.append(
+        px.line(
+            trend_df,
+            x="year",
+            y="life_expectancy",
+            color="status",
+            markers=True,
+            labels={"life_expectancy": "Avg Life‑Expectancy (yrs)", "year": ""},
+            title="📈 Global Trend 2000‑2015 (Developed vs Developing)",
+        ).update_layout(height=400)
+    )
+
+    # 5️⃣ Schooling Scatter
+    figs.append(
+        px.scatter(
+            df_year,
+            x="schooling",
+            y="life_expectancy",
+            trendline="ols",
+            color="status",
+            hover_name="country",
+            labels={"schooling": "Avg Years of Schooling", "life_expectancy": "Years"},
+            title=f"🎓 Schooling vs Life‑Expectancy — {year}",
+        ).update_layout(height=450)
+    )
+
+    # ── SEND MESSAGE ──
+    elements = [Markdown(kpi_md)] + [Plotly(name=fig.layout.title.text, figure=fig) for fig in figs]
+    await cl.Message(content=None, elements=elements).send()
+
+# ───────────────── LIFECYCLE HOOKS ─────────────────
 @cl.on_chat_start
 async def start():
     df = load_data()
     cl.user_session.set("df", df)
 
-    max_gdp = int(df["GDP"].max())
-    max_hexp = float(df["percentage expenditure"].max())
+    # prepare filter options
+    years = sorted(df.year.unique())
+    status_opts = sorted(df.status.unique().tolist())
+    country_opts = sorted(df.country.unique().tolist())
 
-    initial_filters = {
-        "status": "Both",
-        "countries": [],
-        "min_gdp": 0,
-        "max_gdp": max_gdp,
-        "min_hexp": 0.0,
-        "max_hexp": max_hexp,
-    }
-
-    # Build the settings panel (cog‑icon)
+    # open the settings pane (cog‑icon)
     settings = await cl.ChatSettings(
+        label="🔍 Filters",
         inputs=[
-            Select(
-                id="status",
-                label="Country Status",
-                values=["Both", "Developed", "Developing"],
-                initial_index=0,
-            ),
-            Tags(id="countries", label="Countries (optional)", initial=[]),
-            Slider(
-                id="min_gdp",
-                label="Min GDP per Capita",
-                min=0,
-                max=max_gdp,
-                initial=0,
-                step=1_000,
-            ),
-            Slider(
-                id="max_gdp",
-                label="Max GDP per Capita",
-                min=0,
-                max=max_gdp,
-                initial=max_gdp,
-                step=1_000,
-            ),
-            Slider(
-                id="min_hexp",
-                label="Min Health Expenditure % GDP",
-                min=0,
-                max=max_hexp,
-                initial=0,
-                step=0.1,
-            ),
-            Slider(
-                id="max_hexp",
-                label="Max Health Expenditure % GDP",
-                min=0,
-                max=max_hexp,
-                initial=max_hexp,
-                step=0.1,
-            ),
+            Slider(id="year", label="Year", min=int(min(years)), max=int(max(years)), initial=int(max(years)), step=1),
+            Multiselect(id="status", label="Development Status", options=status_opts, initial=status_opts),
+            Tags(id="countries", label="Country (optional)", initial=[]),
         ],
-        label="Filters",
     ).send()
 
-    # Store and render
     cl.user_session.set("filters", settings)
     await render_dashboard(settings)
 
-
 @cl.on_settings_update
-async def _update(new_settings: dict):
-    cl.user_session.set("filters", new_settings)
-    await render_dashboard(new_settings)
+async def update(settings: dict):
+    cl.user_session.set("filters", settings)
+    await render_dashboard(settings)
 
-
-# Optional command‑line entry point ➜  python app.py
+# ───────────────── CLI ENTRY ─────────────────
 if __name__ == "__main__":
     import subprocess, sys
     subprocess.run([sys.executable, "-m", "chainlit", "run", __file__])
